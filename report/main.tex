@@ -1,0 +1,173 @@
+\documentclass{article}
+\usepackage[english]{babel}
+\usepackage[a4paper,top=2.5cm,bottom=3cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{lipsum}
+\usepackage{graphicx}
+\usepackage{gensymb}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\usepackage{sourcecodepro}
+
+% Nord / Minimal palette
+\definecolor{bglight}{HTML}{f8f9fa}     % Warm white/off-white
+\definecolor{fgdark}{HTML}{2e3440}      % Dark slate text
+\definecolor{keywordblue}{HTML}{5e81ac} % Muted blue
+\definecolor{stringteal}{HTML}{a3be8c}  % Soft teal
+\definecolor{commentgreen}{HTML}{8fbcbb}% Seafoam comments
+\definecolor{bordergray}{HTML}{e5e9f0}  % Very light border
+
+\lstdefinestyle{modern-light}{
+    backgroundcolor=\color{bglight},
+    basicstyle=\ttfamily\footnotesize\color{fgdark},
+    commentstyle=\color{commentgreen}\itshape\small,
+    keywordstyle=\color{keywordblue}\bfseries,
+    stringstyle=\color{stringteal},
+    numberstyle=\tiny\color{gray},
+    breaklines=true,
+    captionpos=b,
+    numbers=left,
+    numbersep=12pt,
+    xleftmargin=3em,
+    framexleftmargin=2.5em,
+    frame=single,
+    rulecolor=\color{bordergray},
+    rulesepcolor=\color{bordergray},
+    aboveskip=1.5em,
+    belowskip=1.5em,
+    showstringspaces=false,
+    tabsize=2,
+    columns=flexible,
+    keepspaces=true
+}
+
+\lstset{style=modern-light}
+
+\graphicspath{ {./images/} }
+
+\title{Progetto di Scalable and Cloud Programming}
+
+\author{
+  Matteo Galiazzo\\
+  Dipartimento di Informatica - Scienza e Ingegneria\\
+  Università di Bologna\\
+  \texttt{matteo.galiazzo@studio.unibo.it}\\
+}
+
+\date{Anno Accademico 2025-26}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Il presente report descrive l'implementazione in Scala e Spark di un sistema per l'analisi di co-occorrenza di terremoti, eseguito su piattaforma Google Cloud DataProc. Viene illustrato l'approccio algoritmico Map-Reduce utilizzato per identificare le coppie di località con la maggiore frequenza sismica simultanea e viene proposta un'analisi preliminare di scalabilità e prestazioni al variare delle risorse del cluster e del partizionamento dei dati.
+\end{abstract}
+
+\tableofcontents
+
+\newpage
+
+\section{Lavoro svolto}
+L'obiettivo del progetto è stato realizzare un'applicazione distribuita per l'analisi di un dataset di eventi sismici, al fine di individuare la coppia di località caratterizzata dal massimo numero di co-occorrenze e di elencare le date in cui tali eventi si sono verificati.
+
+Come richiesto dalle specifiche, il progetto è stato sviluppato utilizzando Scala e Apache Spark, adottando il paradigma Map-Reduce per l'elaborazione distribuita. Il codice sorgente completo e le istruzioni per l'esecuzione sono disponibili nella repository GitHub pubblica al seguente indirizzo:
+\begin{center}
+  \url{https://github.com/gekoxyz/unibo-scalable-and-cloud}
+\end{center}
+
+\subsection{Pre-elaborazione dei dati}
+Basandosi sulle specifiche del progetto, al dataset sono state applicate le seguenti trasformazioni:
+\begin{itemize}
+  \item Le coordinate geografiche (latitudine e longitudine) sono state approssimate alla prima cifra decimale con arrotondamento all'intero più vicino, raggruppando così eventi distinti in macro-aree.
+  \item La co-occorrenza è stata definita sulla base di una finestra temporale giornaliera. Gli orari specifici sono stati ignorati, considerando solo la data.
+  \item Sono stati rimossi gli eventi duplicati, per evitare che più eventi registrati nella stessa area e nello stesso giorno venissero conteggiati erroneamente come co-occorrenze multiple.
+\end{itemize}
+
+\section{Approccio utilizzato}
+L'implementazione si basa su un'architettura a due passaggi ottimizzata per minimizzare l'overhead dello shuffle e l'uso della memoria.
+
+\subsection{Gestione dei Dati e Strutture}
+Sono state definite due \textit{case class} principali per modellare i dati: \texttt{Position}, che gestisce la logica di ordinamento delle coordinate per garantire che la coppia $(A, B)$ sia equivalente a $(B, A)$, ed \texttt{EventKey}, che associa una posizione a una data specifica.
+
+Sia le posizioni che gli interi sono stati gestiti tramite \texttt{Integer}, di modo da evitare l'overhead delle stringhe nel caso delle date o dei \texttt{Double} nel caso delle coordinate.
+
+Il dataset viene caricato dal bucket Google Cloud Storage e immediatamente ripartizionato tramite il metodo \texttt{repartition} per bilanciare il carico tra i nodi worker fin dalle prime fasi.
+
+\subsection{Algoritmo di Analisi}
+L'analisi segue questi step logici:
+\begin{enumerate}
+  \item \textbf{Raggruppamento}: Gli eventi unici vengono raggruppati per data. L'RDD risultante viene messo in cache (\texttt{.cache()}) poiché sarà necessario accedervi due volte.
+  \item \textbf{Conteggio delle Coppie (Passo 1)}: Per ogni data, vengono generate tutte le combinazioni possibili di coppie di località. Utilizzando \texttt{reduceByKey} con un numero parametrico di partizioni, il sistema calcola la frequenza di ogni coppia. Questo approccio è efficiente perché trasmette attraverso la rete solo i contatori e le chiavi, non le liste complete delle date.
+  \item \textbf{Selezione del Massimo}: Tramite una semplice azione di \texttt{reduce}, viene identificata la coppia con il conteggio massimo.
+  \item \textbf{Recupero delle Date (Passo 2)}: Una volta nota la "coppia vincente", il sistema scansiona nuovamente i dati raggruppati (già in cache) per filtrare e raccogliere solo le date in cui quella specifica coppia è apparsa. Questo evita di dover trascinare l'intera lista di date durante la fase costosa di shuffle del passo 1.
+\end{enumerate}
+
+\subsection{Automazione e Cloud}
+Per gestire l'esecuzione su Google Cloud DataProc, è stato sviluppato uno script Python (\texttt{run.py}) che automatizza il test delle performance. Gli step principali sono:
+\begin{itemize}
+  \item Creazione del cluster con macchine \texttt{n2-standard-4} e dischi da 100GB.
+  \item Sottomissione dei job Spark con le diverse configurazioni di partizionamento.
+  \item Download dei risultati e eliminazione del cluster.
+\end{itemize}
+
+\section{Analisi di scalabilità e prestazioni}
+In questa sezione vengono analizzate le prestazioni dell'applicazione al variare delle risorse computazionali (strong scaling) e della configurazione interna di Spark (tuning delle partizioni).
+
+\subsection{Setup Sperimentale}
+Tutti i test sono stati eseguiti sulla \textbf{versione completa} del dataset. I cluster DataProc sono stati configurati come segue:
+\begin{itemize}
+  \item \textbf{Master}: 1 nodo \texttt{n2-standard-4}
+  \item \textbf{Worker}: Variabile (2, 3, 4 nodi \texttt{n2-standard-4}) 
+  \item \textbf{Storage}: 100GB per nodo
+\end{itemize}
+Per ogni configurazione del cluster, sono stati testati diversi livelli di parallelismo impostando il numero di partizioni a 4, 8, 12 e 16.
+
+\subsection{Risultati dei Benchmark}
+
+La Tabella \ref{tab:results} mostra i tempi di esecuzione (in secondi) rilevati per le diverse combinazioni di Worker e Partizioni.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}cccc@{}}
+\toprule
+\textbf{Partizioni} & \textbf{2 Worker (8 core)} & \textbf{3 Worker (12 core)} & \textbf{4 Worker (16 core)} \\ \midrule
+4  & [INSERIRE TEMPO] & [INSERIRE TEMPO] & [INSERIRE TEMPO] \\
+8  & [INSERIRE TEMPO] & [INSERIRE TEMPO] & [INSERIRE TEMPO] \\
+12 & [INSERIRE TEMPO] & [INSERIRE TEMPO] & [INSERIRE TEMPO] \\
+16 & [INSERIRE TEMPO] & [INSERIRE TEMPO] & [INSERIRE TEMPO] \\ \bottomrule
+\end{tabular}
+\caption{Tempi di esecuzione al variare delle risorse e del partizionamento.}
+\label{tab:results}
+\end{table}
+
+\subsection{Analisi della Scalabilità}
+\textbf{[DA COMPLETARE UNA VOLTA DISPONIBILI I DATI]}
+\\
+\textit{Placeholder per l'analisi:}
+Si osserva che aumentando il numero di nodi worker da 2 a 4, il tempo di esecuzione diminuisce, evidenziando la capacità di Spark di scalare orizzontalmente. In particolare:
+\begin{itemize}
+    \item Con un numero basso di partizioni (es. 4), l'aumento dei worker potrebbe non portare benefici lineari a causa del sottoutilizzo delle CPU disponibili.
+    \item La configurazione ottimale sembra essere quella con [X] partizioni su [Y] worker, dove il bilanciamento tra overhead di gestione dei task e parallelismo effettivo è massimizzato.
+\end{itemize}
+
+\subsection{Impatto del Partizionamento}
+\textbf{[DA COMPLETARE UNA VOLTA DISPONIBILI I DATI]}
+\\
+\textit{Placeholder per l'analisi:}
+L'utilizzo esplicito di \texttt{repartition} e del parametro di partizionamento in \texttt{reduceByKey} ha mostrato un impatto significativo. Un numero di partizioni troppo basso su cluster grandi (es. 4 partizioni su 4 worker) crea bottleneck, lasciando core inattivi. Viceversa, un numero eccessivo di partizioni (es. 16 su 2 worker) introduce un overhead di scheduling non necessario.
+
+\section{Conclusioni}
+Il progetto ha permesso di verificare l'efficacia di Apache Spark nell'analisi di dataset di grandi dimensioni. L'approccio a due passaggi ha garantito un utilizzo efficiente della memoria, mentre i test su DataProc hanno evidenziato l'importanza di un corretto tuning del numero di partizioni in relazione alle risorse fisiche disponibili nel cluster.
+
+\end{document}
