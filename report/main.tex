@@ -107,7 +107,7 @@ Il dataset viene caricato dal bucket Google Cloud Storage e immediatamente ripar
 \subsection{Algoritmo di Analisi}
 L'analisi segue questi step logici:
 \begin{enumerate}
-  \item \textbf{Raggruppamento}: Gli eventi unici vengono raggruppati per data. L'RDD risultante viene messo in cache (\texttt{.cache()}) poiché sarà necessario accedervi due volte.
+  \item \textbf{Raggruppamento}: Gli eventi unici vengono raggruppati per data. L'RDD risultante viene messo in cache poiché sarà necessario accedervi due volte.
   \item \textbf{Conteggio delle Coppie (Passo 1)}: Per ogni data, vengono generate tutte le combinazioni possibili di coppie di località. Utilizzando \texttt{reduceByKey} con un numero parametrico di partizioni, il sistema calcola la frequenza di ogni coppia. Questo approccio è efficiente perché trasmette attraverso la rete solo i contatori e le chiavi, non le liste complete delle date.
   \item \textbf{Selezione del Massimo}: Tramite una semplice azione di \texttt{reduce}, viene identificata la coppia con il conteggio massimo.
   \item \textbf{Recupero delle Date (Passo 2)}: Una volta nota la "coppia vincente", il sistema scansiona nuovamente i dati raggruppati (già in cache) per filtrare e raccogliere solo le date in cui quella specifica coppia è apparsa. Questo evita di dover trascinare l'intera lista di date durante la fase costosa di shuffle del passo 1.

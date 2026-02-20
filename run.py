@@ -18,6 +18,7 @@ import subprocess
 import time
 import datetime
 import csv
+import json
 
 # --- Configuration ---
 PROJECT_ID = "mgaliazzo-scalable-and-cloud"
@@ -35,8 +36,11 @@ INPUT_DATA = f"gs://{BUCKET_NAME}/dataset/dataset-earthquakes-full.csv" # Using 
 BASE_OUTPUT_PATH = f"gs://{BUCKET_NAME}/results"
 
 # 2 workers = 8 cores, 3 workers = 12 cores, 4 workers = 16 cores.
-WORKER_CONFIGS = [2, 3, 4] 
-PARTITION_CONFIGS = [4, 8, 12, 16]
+# WORKER_CONFIGS = [2, 3, 4] 
+# PARTITION_CONFIGS = [4, 8, 12, 16]
+WORKER_CONFIGS = [4] 
+PARTITION_CONFIGS = [16]
+# PARTITION_CONFIGS = [48]
 
 RESULTS_FILE = "benchmark_results.csv"
 
@@ -73,20 +77,40 @@ def run_spark_job(num_partitions, unique_run_id):
       --project={PROJECT_ID} \
       --region={REGION} \
       --jar={REMOTE_JAR_PATH} \
+      --format=json \
       -- {spark_args}
     """
-    
-    start_time = time.time()
-    run_command(cmd)
-    end_time = time.time()
 
+    print(f"[EXEC] Submitting Job {unique_run_id}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    data = json.loads(result.stdout)
+    
+    end_time_str = data['status']['stateStartTime']
+    start_time_str = None
+    for history in data['statusHistory']:
+      if history['state'] == 'RUNNING':
+        start_time_str = history['stateStartTime']
+        break
+
+    # Note: .replace('Z', '+00:00') ensures compatibility with Python's fromisoformat
+    start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+    end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+
+    execution_time = end_time - start_time
+    
+    print(f"Start Time (RUNNING): {start_time}")
+    print(f"End Time (DONE):      {end_time}")
+    print(f"Real Execution Time:  {execution_time}")
+    print(f"Execution in seconds: {execution_time.total_seconds()} seconds")
+
+    # save the run
     local_output_dir = f"local_results/{unique_run_id}"
     print(f"Downloading results to {local_output_dir}...")
     subprocess.call(f"mkdir -p {local_output_dir}", shell=True)
     download_cmd = f"gsutil cp -r {BASE_OUTPUT_PATH}/{unique_run_id}/* {local_output_dir}"
     run_command(download_cmd)
     
-    return end_time - start_time
+    return execution_time
 
 
 if __name__ == "__main__":
