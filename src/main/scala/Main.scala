@@ -3,6 +3,7 @@ package it.matteogaliazzo.spark
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 
+import scala.collection.mutable
 import scala.math.BigDecimal
 
 case class Position(longitude: Int, latitude: Int) extends Ordered[Position] {
@@ -43,18 +44,23 @@ object Main {
       val dateInt = (year * 10000) + (month * 100) + day
 
       (dateInt, Position(lonInt, latInt))
-    }.distinct(numPartitions)
+    }
 
     val groupedByDate = rawRdd
-      .aggregateByKey(Set.empty[Position])(
-        (set, pos) => set + pos, // local combine on each partition
-        (set1, set2) => set1 ++ set2 // merge across partitions
-      ).filter(_._2.size >= 2).mapValues(_.toList.sorted).cache()
+//      .aggregateByKey(Set.empty[Position])(
+      .aggregateByKey(mutable.HashSet.empty[Position])(
+        (set, pos) => {set += pos; set}, // local combine on each partition
+        (set1, set2) => {set1 ++= set2; set1} // merge across partitions
+      ).filter(_._2.size >= 2)
+      .mapValues(_.toArray.sorted)
+      .cache()
 
     val pairCounts = groupedByDate.flatMap { case (_, positions) =>
-      positions.combinations(2).map { pair =>
-        ((pair(0), pair(1)), 1)
-      }
+      val n = positions.length
+      for {
+        i <- 0 until n
+        j <- i + 1 until n
+      } yield ((positions(i), positions(j)), 1)
     }.reduceByKey(_ + _, numPartitions)
 
     val (bestPair, maxCount) = pairCounts.reduce { (a, b) =>
@@ -62,9 +68,9 @@ object Main {
     }
 
     val (p1, p2) = bestPair
-    val winningDates = groupedByDate.filter { case (_, positions) =>
-        positions.contains(p1) && positions.contains(p2)
-      }.map { case (date, _) => date }
+    val winningDates = groupedByDate
+      .filter { case (_, positions) => positions.contains(p1) && positions.contains(p2)}
+      .map { case (date, _) => date }
       .collect()
       .sorted
 

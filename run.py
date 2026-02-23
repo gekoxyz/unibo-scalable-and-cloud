@@ -16,7 +16,7 @@ gcloud projects add-iam-policy-binding mgaliazzo-scalable-and-cloud \
 
 import subprocess
 import time
-import datetime
+from datetime import datetime
 import csv
 import json
 
@@ -82,7 +82,7 @@ def run_spark_job(num_partitions, unique_run_id):
     """
 
     print(f"[EXEC] Submitting Job {unique_run_id}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
     data = json.loads(result.stdout)
     
     end_time_str = data['status']['stateStartTime']
@@ -110,7 +110,7 @@ def run_spark_job(num_partitions, unique_run_id):
     download_cmd = f"gsutil cp -r {BASE_OUTPUT_PATH}/{unique_run_id}/* {local_output_dir}"
     run_command(download_cmd)
     
-    return execution_time
+    return execution_time.total_seconds()
 
 
 if __name__ == "__main__":
@@ -137,13 +137,15 @@ if __name__ == "__main__":
           
           with open(RESULTS_FILE, 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow([workers, partitions, f"{duration:.2f}", datetime.datetime.now(), "Success"])
+            writer.writerow([workers, partitions, f"{duration:.2f}", datetime.now(), "Success"])
                 
         except Exception as e:
           print(f">>> FAILED: Workers={workers}, Partitions={partitions}")
+          print(e)
+
           with open(RESULTS_FILE, 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow([workers, partitions, "0", datetime.datetime.now(), "Failed"])
+            writer.writerow([workers, partitions, "0", datetime.now(), "Failed"])
 
     except Exception as e:
       print(f"[CRITICAL] Failed to create cluster with {workers} workers. Moving to next config.")
