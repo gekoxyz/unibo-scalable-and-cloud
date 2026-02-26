@@ -1,6 +1,6 @@
 \documentclass{article}
 \usepackage[english]{babel}
-\usepackage[a4paper,top=2.5cm,bottom=3cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+\usepackage[a4paper,top=1.5cm,bottom=2cm,left=2cm,right=2cm,marginparwidth=1.5cm]{geometry}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
@@ -16,8 +16,12 @@
 \usepackage{float}
 \usepackage{listings}
 \usepackage{xcolor}
+\usepackage{amsmath}
 
 \usepackage{sourcecodepro}
+
+\usepackage{enumitem}
+\setlist[itemize]{noitemsep, topsep=0pt}
 
 % Nord / Minimal palette
 \definecolor{bglight}{HTML}{f8f9fa}     % Warm white/off-white
@@ -70,47 +74,50 @@
 
 \maketitle
 
-\begin{abstract}
-Il presente report descrive l'implementazione in Scala e Spark di un sistema per l'analisi di co-occorrenza di terremoti, eseguito su piattaforma Google Cloud DataProc. Viene illustrato l'approccio algoritmico Map-Reduce utilizzato per identificare le coppie di località con la maggiore frequenza sismica simultanea e viene proposta un'analisi preliminare di scalabilità e prestazioni al variare delle risorse del cluster e del partizionamento dei dati.
-\end{abstract}
-
 \tableofcontents
 
-\newpage
-
 \section{Lavoro svolto}
-L'obiettivo del progetto è stato realizzare un'applicazione distribuita per l'analisi di un dataset di eventi sismici, al fine di individuare la coppia di località caratterizzata dal massimo numero di co-occorrenze e di elencare le date in cui tali eventi si sono verificati.
+L'obiettivo del progetto è realizzare un'applicazione distribuita per l'analisi di un dataset di eventi sismici, al fine di individuare la coppia di località caratterizzata dal massimo numero di co-occorrenze e di elencare le date in cui tali eventi si sono verificati.
 
-Come richiesto dalle specifiche, il progetto è stato sviluppato utilizzando Scala e Apache Spark, adottando il paradigma Map-Reduce per l'elaborazione distribuita. Il codice sorgente completo e le istruzioni per l'esecuzione sono disponibili nella repository GitHub pubblica al seguente indirizzo:
-\begin{center}
-  \url{https://github.com/gekoxyz/unibo-scalable-and-cloud}
-\end{center}
+Il codice sorgente completo e le istruzioni per l'esecuzione sono disponibili nella repository GitHub all'indirizzo:
+\newline
+\url{https://github.com/gekoxyz/unibo-scalable-and-cloud}.
 
 \subsection{Pre-elaborazione dei dati}
-Basandosi sulle specifiche del progetto, al dataset sono state applicate le seguenti trasformazioni:
+Al dataset sono state applicate le seguenti trasformazioni:
 \begin{itemize}
-  \item Le coordinate geografiche (latitudine e longitudine) sono state approssimate alla prima cifra decimale con arrotondamento all'intero più vicino, raggruppando così eventi distinti in macro-aree.
-  \item La co-occorrenza è stata definita sulla base di una finestra temporale giornaliera. Gli orari specifici sono stati ignorati, considerando solo la data.
-  \item Sono stati rimossi gli eventi duplicati, per evitare che più eventi registrati nella stessa area e nello stesso giorno venissero conteggiati erroneamente come co-occorrenze multiple.
+  \item Le coordinate geografiche (latitudine e longitudine) sono state approssimate alla prima cifra decimale con arrotondamento all'intero più vicino, per raggruppare gli eventi in macro-aree.
+  \item Gli orari degli eventi sono stati rimossi, per considerare la co-occorrenza solo tramite la data.
+  \item Sono stati rimossi gli eventi duplicati, per evitare che più eventi registrati nella stessa area e nello stesso giorno vengano conteggiati come co-occorrenze multiple.
 \end{itemize}
 
 \section{Approccio utilizzato}
-L'implementazione si basa su un'architettura a due passaggi ottimizzata per minimizzare l'overhead dello shuffle e l'uso della memoria.
+L'implementazione segue un'architettura in due fasi progettata per separare il processing del dataset dall'analisi delle co-occorrenze.
 
 \subsection{Gestione dei Dati e Strutture}
-Sono state definite due \textit{case class} principali per modellare i dati: \texttt{Position}, che gestisce la logica di ordinamento delle coordinate per garantire che la coppia $(A, B)$ sia equivalente a $(B, A)$, ed \texttt{EventKey}, che associa una posizione a una data specifica.
+È stata definita la classe \texttt{Position} per rappresentare una cella geografica e fornire un ordinamento tra le coordinate.
+L'ordinamento consente di generare direttamente combinazioni non ordinate tra posizioni evitando normalizzazioni costose delle coppie \((A,B)\) e \((B,A)\), riducendo il lavoro computazionale nella fase combinatoria.
 
-Sia le posizioni che gli interi sono stati gestiti tramite \texttt{Integer}, di modo da evitare l'overhead delle stringhe nel caso delle date o dei \texttt{Double} nel caso delle coordinate.
+Sia le posizioni sia le date sono state rappresentate tramite \texttt{Int}.
+Questa scelta riduce l'occupazione di memoria, migliora le prestazioni di serializzazione nello shuffle e rende più efficienti le operazioni di confronto e hashing rispetto all'uso di \texttt{String} o \texttt{Double}.
 
-Il dataset viene caricato dal bucket Google Cloud Storage e immediatamente ripartizionato tramite il metodo \texttt{repartition} per bilanciare il carico tra i nodi worker fin dalle prime fasi.
+Il dataset è stato caricato dal bucket Google Cloud Storage e immediatamente ripartizionato tramite il metodo \texttt{repartition} per distribuire uniformemente i dati tra i worker ed evitare fenomeni di data skew (distribuzione non uniforme dei dati) nelle fasi successive, molto più costosi da correggere.
 
 \subsection{Algoritmo di Analisi}
-L'analisi segue questi step logici:
+L'algoritmo dopo il pre-processing dei dati è strutturato nel modo seguente:
 \begin{enumerate}
-  \item \textbf{Raggruppamento}: Gli eventi unici vengono raggruppati per data. L'RDD risultante viene messo in cache poiché sarà necessario accedervi due volte.
-  \item \textbf{Conteggio delle Coppie (Passo 1)}: Per ogni data, vengono generate tutte le combinazioni possibili di coppie di località. Utilizzando \texttt{reduceByKey} con un numero parametrico di partizioni, il sistema calcola la frequenza di ogni coppia. Questo approccio è efficiente perché trasmette attraverso la rete solo i contatori e le chiavi, non le liste complete delle date.
-  \item \textbf{Selezione del Massimo}: Tramite una semplice azione di \texttt{reduce}, viene identificata la coppia con il conteggio massimo.
-  \item \textbf{Recupero delle Date (Passo 2)}: Una volta nota la "coppia vincente", il sistema scansiona nuovamente i dati raggruppati (già in cache) per filtrare e raccogliere solo le date in cui quella specifica coppia è apparsa. Questo evita di dover trascinare l'intera lista di date durante la fase costosa di shuffle del passo 1.
+  \item \textbf{Raggruppamento per data}: l'RDD viene aggregato per giorno utilizzando \texttt{aggregateByKey}, così da eseguire una combinazione locale nelle singole partizioni prima dello shuffle.
+  Per l'aggregazione viene utilizzato un \texttt{HashSet[Position]}, che consente deduplicazione direttamente durante la fase di combinazione locale.
+  In questo modo la quantità di dati trasferiti tra nodi dipende dal numero di posizioni distinte e non dal numero totale di eventi registrati.
+  L'RDD risultante viene mantenuto in cache poiché riutilizzato in più azioni, evitando la ricostruzione dell'intero DAG di trasformazioni.
+
+  \item \textbf{Conteggio delle co-occorrenze}: per ciascuna data vengono generate $\binom{n}{2}$ combinazioni non ordinate tra le posizioni osservate.
+  L'uso di posizioni precedentemente ordinate permette di evitare duplicazioni e di non dover normalizzare esplicitamente le coppie.
+  Le frequenze vengono poi aggregate con \texttt{reduceByKey}, che effettua una riduzione locale prima dello shuffle mantenendo il traffico di rete limitato.
+  La coppia con frequenza massima viene individuata tramite una \texttt{reduce} distribuita, senza raccogliere l'intero RDD sul processo centrale che coordina il job.
+
+  \item \textbf{Recupero delle date}: una volta identificata la coppia più frequente, si riutilizza l'RDD salvato precedentemente in cache per filtrare le sole date in cui entrambe le posizioni compaiono simultaneamente.
+  Questo evita di ripetere l'intero processo di aggregazione, che rappresenta la parte più costosa della pipeline.
 \end{enumerate}
 
 \subsection{Automazione e Cloud}
@@ -121,53 +128,175 @@ Per gestire l'esecuzione su Google Cloud DataProc, è stato sviluppato uno scrip
   \item Download dei risultati e eliminazione del cluster.
 \end{itemize}
 
+
+% ----------------------------------
+% STRONG SCALING: l'obiettivo è ridurre il tempo di esecuzione mantenendo la dimensione del problema fissata. La quantità di lavoro rimane costante, quindi il lavoro per singolo worker node diminuisce all'aumentare di n.
+% La strong scaling efficiency quantifica l'impatto di ogni nodo aggiunto. Lo speedup è limitato dalla legge di Amdahl, l'efficienza tende a 0 all aumentare di n
+% La strong scaling efficiency quantifica l'impatto di ogni nodo aggiunto. Lo speedup è limitato dalla legge di Amdahl, l'efficienza tende a 0 all aumentare di n
+% 
+% WEAK SCALING: l'obiettivo è risolvere problemi più grandi nello stesso tempo. Si aumenta il numero di nodi n mantenendo fissato il lavoro per singolo nodo.
+% La weak scaling efficiency tende a 1 se il programma utilizza in modo produttivo il 100% delle risorse aggiunte.
+% Lo strong scaling misura quanto efficacemente possiamo ridurre il tempo di esecuzione per un problema fissato, mentre il weak scaling misura quanto efficacemente possiamo aumentare la dimensione del problema mantenendo costante il tempo di esecuzione
+% ----------------------------------
+
 \section{Analisi di scalabilità e prestazioni}
-In questa sezione vengono analizzate le prestazioni dell'applicazione al variare delle risorse computazionali (strong scaling) e della configurazione interna di Spark (tuning delle partizioni).
 
-\subsection{Setup Sperimentale}
-Tutti i test sono stati eseguiti sulla \textbf{versione completa} del dataset. I cluster DataProc sono stati configurati come segue:
-\begin{itemize}
-  \item \textbf{Master}: 1 nodo \texttt{n2-standard-4}
-  \item \textbf{Worker}: Variabile (2, 3, 4 nodi \texttt{n2-standard-4}) 
-  \item \textbf{Storage}: 100GB per nodo
-\end{itemize}
-Per ogni configurazione del cluster, sono stati testati diversi livelli di parallelismo impostando il numero di partizioni a 4, 8, 12 e 16.
+\subsection{Risultati grezzi dei Benchmark}
 
-\subsection{Risultati dei Benchmark}
+La Tabella~\ref{tab:benchmark_results} riporta i tempi di esecuzione (in secondi) ottenuti variando il numero di worker del cluster e il numero di partizioni impostato nell'applicazione Spark. I test sono stati eseguiti su un cluster Google Cloud Dataproc con macchine di tipo \texttt{n2-standard-4}.
 
-La Tabella \ref{tab:results} mostra i tempi di esecuzione (in secondi) rilevati per le diverse combinazioni di Worker e Partizioni.
-
-\begin{table}[H]
-\centering
-\begin{tabular}{@{}cccc@{}}
-\toprule
-\textbf{Partizioni} & \textbf{2 Worker (8 core)} & \textbf{3 Worker (12 core)} & \textbf{4 Worker (16 core)} \\ \midrule
-4  & [INSERIRE TEMPO] & [INSERIRE TEMPO] & [INSERIRE TEMPO] \\
-8  & [INSERIRE TEMPO] & [INSERIRE TEMPO] & [INSERIRE TEMPO] \\
-12 & [INSERIRE TEMPO] & [INSERIRE TEMPO] & [INSERIRE TEMPO] \\
-16 & [INSERIRE TEMPO] & [INSERIRE TEMPO] & [INSERIRE TEMPO] \\ \bottomrule
-\end{tabular}
-\caption{Tempi di esecuzione al variare delle risorse e del partizionamento.}
-\label{tab:results}
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{c|ccccccc}
+        \toprule
+        \textbf{Workers} & \multicolumn{7}{c}{\textbf{Partizioni}} \\
+        & \textbf{8} & \textbf{16} & \textbf{32} & \textbf{48} & \textbf{64} & \textbf{128} & \textbf{256} \\
+        \midrule
+        \textbf{2} & 648.23 & 513.23 & 452.43 & 428.81 & 402.83 & 385.07 & 374.01 \\
+        \textbf{3} & 612.57 & 379.76 & 313.27 & 294.56 & 292.83 & 290.89 & 290.04 \\
+        \textbf{4} & 596.30 & 255.13 & 247.32 & 235.64 & \textbf{229.11} & 239.17 & 226.24 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Tempi di esecuzione (in secondi) al variare di worker e partizioni.}
+    \label{tab:benchmark_results}
 \end{table}
 
-\subsection{Analisi della Scalabilità}
-\textbf{[DA COMPLETARE UNA VOLTA DISPONIBILI I DATI]}
-\\
-\textit{Placeholder per l'analisi:}
-Si osserva che aumentando il numero di nodi worker da 2 a 4, il tempo di esecuzione diminuisce, evidenziando la capacità di Spark di scalare orizzontalmente. In particolare:
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.9\linewidth]{./images/performance_chart.png}
+  \caption{Tempistiche per le diverse configurazioni di worker e partizioni}
+\end{figure}
+
+\subsection{Setup Sperimentale}
+
+Gli esperimenti sono stati eseguiti su cluster Google Cloud Dataproc composti da:
+
 \begin{itemize}
-    \item Con un numero basso di partizioni (es. 4), l'aumento dei worker potrebbe non portare benefici lineari a causa del sottoutilizzo delle CPU disponibili.
-    \item La configurazione ottimale sembra essere quella con [X] partizioni su [Y] worker, dove il bilanciamento tra overhead di gestione dei task e parallelismo effettivo è massimizzato.
+    \item \textbf{Master:} 1 nodo \texttt{n2-standard-4}
+    \item \textbf{Worker:} 2, 3 o 4 nodi \texttt{n2-standard-4}
+    \item \textbf{Storage:} 100GB per nodo
 \end{itemize}
 
-\subsection{Impatto del Partizionamento}
-\textbf{[DA COMPLETARE UNA VOLTA DISPONIBILI I DATI]}
-\\
-\textit{Placeholder per l'analisi:}
-L'utilizzo esplicito di \texttt{repartition} e del parametro di partizionamento in \texttt{reduceByKey} ha mostrato un impatto significativo. Un numero di partizioni troppo basso su cluster grandi (es. 4 partizioni su 4 worker) crea bottleneck, lasciando core inattivi. Viceversa, un numero eccessivo di partizioni (es. 16 su 2 worker) introduce un overhead di scheduling non necessario.
+Ogni nodo \texttt{n2-standard-4} dispone di 4 vCPU. Il numero totale di core disponibili varia quindi da 8 a 16 al variare dei worker.
 
-\section{Conclusioni}
-Il progetto ha permesso di verificare l'efficacia di Apache Spark nell'analisi di dataset di grandi dimensioni. L'approccio a due passaggi ha garantito un utilizzo efficiente della memoria, mentre i test su DataProc hanno evidenziato l'importanza di un corretto tuning del numero di partizioni in relazione alle risorse fisiche disponibili nel cluster.
+Per ciascuna configurazione del cluster sono stati testati diversi livelli di parallelismo impostando il numero di partizioni Spark a:
+
+\[
+\{8, 16, 32, 48, 64, 128, 256\}
+\]
+
+La dimensione del dataset è stata mantenuta costante, per testare lo \textbf{strong scaling}.
+
+\subsection{Risultati Sperimentali}
+
+La Tabella~\ref{tab:benchmark_results} riporta i tempi di esecuzione (in secondi) per tutte le configurazioni testate.
+
+\subsubsection{Osservazioni preliminari}
+
+\begin{enumerate}
+    \item L'aumento del numero di partizioni da 8 a 16 produce una riduzione significativa del tempo di esecuzione, in particolare con 3 e 4 worker.
+    \item Oltre le 64 partizioni, i miglioramenti diventano marginali.
+    \item L'aumento del numero di worker produce uno speedup significativo ma sub-lineare.
+\end{enumerate}
+
+\subsection{Impatto del Partizionamento}
+
+\subsubsection{Sotto-utilizzo delle risorse con poche partizioni}
+
+Se abbiamo 8 partizioni possiamo avere al massimo 8 task concorrenti, e quindi nella configurazione con 4 worker, dei 16 core disponibili ne possiamo usare solo 8, con un utilizzo massimo teorico del 50\%.
+
+Questo spiega il tempo elevato osservato con 8 partizioni (596 s).  
+L'incremento a 16 partizioni consente la saturazione dei core e produce un miglioramento drastico (255 s). 
+
+\subsubsection{Regime di overhead}
+
+Per 4 worker si osserva che:
+
+\begin{itemize}
+  \item 48 partizioni: 236 s
+  \item 64 partizioni: 229 s
+  \item 128 partizioni: 239 s
+  \item 256 partizioni: 226 s
+\end{itemize}
+
+Oltre le 48 partizioni, i benefici diventano marginali. Questo suggerisce l'ingresso in un regime in cui l'overhead di scheduling, la gestione di task più piccoli e i costi di shuffle iniziano a compensare i benefici del bilanciamento del carico.
+
+Il range 48-64 partizioni rappresenta quindi un buon compromesso tra granularità e overhead.
+
+\subsection{Strong Scaling Analysis}
+
+Poiché non è disponibile una configurazione a 1 worker, utilizziamo 2 worker come baseline.
+
+\subsubsection{Speedup}
+% Lo speedup è definito come: S(n) = T(2) / T(n)
+Lo speedup è definito come $S(n) = \frac{T(2)}{T(n)}$
+
+Sostituendo i valori abbiamo:
+
+\begin{itemize}
+  \item $S(2) = \frac{374}{374} = 1.00$
+  \item $S(3) = \frac{374}{290} = 1.29$
+  \item $S(4) = \frac{374}{226} = 1.65$
+\end{itemize}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.6\linewidth]{./images/worker_speedup.png}
+  \caption{Speedup per Worker}
+\end{figure}
+
+\subsubsection{Strong Scaling Efficiency}
+% strong scaling efficiency: E(n) = speedup for n nodes / n nodes = 2/n * T(2)/T(n)
+La strong scaling efficiency è definita come: $E(n) = \frac{2}{n} \cdot \frac{T(2)}{T(n)}$
+
+Sostituendo i valori abbiamo:
+\begin{itemize}
+  \item $E(2) = \frac{2}{2} \cdot \frac{374}{374} = 1.00$
+  \item $E(3) = \frac{2}{3} \cdot \frac{374}{290} = 0.86$
+  \item $E(4) = \frac{2}{4} \cdot \frac{374}{226} = 0.825$
+\end{itemize}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.6\linewidth]{./images/strong_scaling_efficiency.png}
+  \caption{Strong Scaling Efficiency}
+\end{figure}
+
+
+\subsection{Stima della Frazione Parallelizzabile (Legge di Amdahl)}
+
+Applicando la legge di Amdahl possiamo stimare la frazione parallelizzabile:
+
+\[
+S(n) = \frac{1}{f + \frac{1-f}{p}}
+\]
+
+dove $f$ è la parte di lavoro che non può essere velocizzata, e $P$ è il grado di parallelizzazione
+
+\begin{itemize}
+  \item $P = 2$
+  \item $S(n) = 1.65$
+\end{itemize}
+
+si ottiene:
+$f \approx 0.21$.
+Circa il \textbf{79\% del workload risulta parallelizzabile}, mentre il restante 21\% rappresenta frazione non parallelizzabile e costi dovuti a shuffle e sincronizzazione.
+
+\subsection{Conclusioni}
+
+L'analisi mostra che:
+
+\begin{enumerate}
+  \item Il parametro di partizionamento ha un impatto critico sulle prestazioni.
+  \item Oltre 48-64 partizioni (per 3-4 worker), i benefici si riducono a causa dell'overhead. Per 2 worker invece aumentare il numero di partizioni aiuta perchè così non c'è il rischio che qualche core rimanga a svolgere il lavoro di una partizione molto impegnativa mentre gli altri sono inattivi, ma il lavoro si bilancia meglio.
+  \item Lo strong scaling da 2 a 4 worker raggiunge:
+  \begin{itemize}
+    \item Speedup = 1.65$\times$
+    \item Efficienza = 82.5\%
+  \end{itemize}
+  \item La frazione parallelizzabile stimata (~79\%) indica un'applicazione ben parallelizzata ma con una componente seriale non trascurabile.
+\end{enumerate}
+
+Nel range testato il sistema mostra una buona scalabilità e non evidenzia ancora un limite. Ulteriori incrementi del numero di worker sarebbero necessari per identificare il punto di saturazione infrastrutturale.
 
 \end{document}

@@ -36,13 +36,11 @@ INPUT_DATA = f"gs://{BUCKET_NAME}/dataset/dataset-earthquakes-full.csv" # Using 
 BASE_OUTPUT_PATH = f"gs://{BUCKET_NAME}/results"
 
 # 2 workers = 8 cores, 3 workers = 12 cores, 4 workers = 16 cores.
-# WORKER_CONFIGS = [2, 3, 4] 
-# PARTITION_CONFIGS = [4, 8, 12, 16]
-WORKER_CONFIGS = [4] 
-PARTITION_CONFIGS = [16]
-# PARTITION_CONFIGS = [48]
+# WORKER_CONFIGS = [2, 3, 4, 5] 
+WORKER_CONFIGS = [5] 
+PARTITION_CONFIGS = [8, 16, 32, 48, 64, 256]
 
-RESULTS_FILE = "benchmark_results.csv"
+RESULTS_FILE = "benchmark_results_128.csv"
 
 def run_command(cmd):
   print(f"\n[EXEC] {cmd}")

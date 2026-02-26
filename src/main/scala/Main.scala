@@ -1,10 +1,7 @@
 package it.matteogaliazzo.spark 
 
-import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
-
 import scala.collection.mutable
-import scala.math.BigDecimal
 
 case class Position(longitude: Int, latitude: Int) extends Ordered[Position] {
   def compare(that: Position): Int = {
@@ -13,8 +10,6 @@ case class Position(longitude: Int, latitude: Int) extends Ordered[Position] {
   }
   override def toString: String = s"(${latitude/10.0}, ${longitude/10.0})"
 }
-
-case class EventKey(position: Position, date: Int)
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -47,7 +42,6 @@ object Main {
     }
 
     val groupedByDate = rawRdd
-//      .aggregateByKey(Set.empty[Position])(
       .aggregateByKey(mutable.HashSet.empty[Position])(
         (set, pos) => {set += pos; set}, // local combine on each partition
         (set1, set2) => {set1 ++= set2; set1} // merge across partitions
@@ -82,7 +76,7 @@ object Main {
 
     sc.parallelize(resultLines, 1).saveAsTextFile(outputPath)
 
-    // To keep localhost:4040 alive to check the cluster job before doing spark.stop
+    // To keep localhost:4040 alive to check the cluster job before doing spark.stop in local
     // scala.io.StdIn.readLine()
     spark.stop()
   }
