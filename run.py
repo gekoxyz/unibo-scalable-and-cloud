@@ -20,24 +20,19 @@ from datetime import datetime
 import csv
 import json
 
-# --- Configuration ---
 PROJECT_ID = "mgaliazzo-scalable-and-cloud"
 REGION = "europe-west1"
 BUCKET_NAME = "mgaliazzo-scalable-and-cloud-data" 
 CLUSTER_NAME = "earthquake-analysis"
 
-# JAR Configuration
 JAR_NAME = "earthquakes_2.12-1.0.jar"
 LOCAL_JAR_PATH = f"target/scala-2.12/{JAR_NAME}"
 REMOTE_JAR_PATH = f"gs://{BUCKET_NAME}/{JAR_NAME}"
 
-# Data Paths
-INPUT_DATA = f"gs://{BUCKET_NAME}/dataset/dataset-earthquakes-full.csv" # Using full dataset [cite: 9]
+INPUT_DATA = f"gs://{BUCKET_NAME}/dataset/dataset-earthquakes-full.csv"
 BASE_OUTPUT_PATH = f"gs://{BUCKET_NAME}/results"
 
-# 2 workers = 8 cores, 3 workers = 12 cores, 4 workers = 16 cores.
-# WORKER_CONFIGS = [2, 3, 4, 5] 
-WORKER_CONFIGS = [5] 
+WORKER_CONFIGS = [2, 3, 4] 
 PARTITION_CONFIGS = [8, 16, 32, 48, 64, 256]
 
 RESULTS_FILE = "benchmark_results_128.csv"
