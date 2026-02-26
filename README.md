@@ -65,5 +65,5 @@ python run.py
 
 ## 4. Output
 
-- Benchmark Metrics: A file named benchmark_results_128.csv will be generated in the root directory, containing execution times and status for every configuration.
-- Job Data: The actual Spark output (Top Pair and Frequency) is downloaded to the local_results/ directory, organized by run ID.
+- Benchmark Metrics: A file named `benchmark_results_8-256.csv` will be generated in the root directory, containing execution times and status for every configuration.
+- Job Data: The actual Spark output (Top Pair and Frequency) is downloaded to the `local_results/` directory.

@@ -35,14 +35,14 @@ BASE_OUTPUT_PATH = f"gs://{BUCKET_NAME}/results"
 WORKER_CONFIGS = [2, 3, 4] 
 PARTITION_CONFIGS = [8, 16, 32, 48, 64, 256]
 
-RESULTS_FILE = "benchmark_results_128.csv"
+RESULTS_FILE = "benchmark_results_8-256.csv"
 
 def run_command(cmd):
   print(f"\n[EXEC] {cmd}")
   subprocess.check_call(cmd, shell=True)
 
 def create_cluster(num_workers):
-  print(f"--- Creating Cluster with {num_workers} workers ---")
+  print(f"[INFO] Creating Cluster with {num_workers} workers")
   cmd = f"""
   gcloud dataproc clusters create {CLUSTER_NAME} \
     --project={PROJECT_ID} \
@@ -56,7 +56,7 @@ def create_cluster(num_workers):
   run_command(cmd)
 
 def delete_cluster():
-  print(f"--- Deleting Cluster ---")
+  print(f"[INFO] Deleting Cluster")
   cmd = f"gcloud dataproc clusters delete {CLUSTER_NAME} --region={REGION} --project={PROJECT_ID} --quiet"
   run_command(cmd)
 
@@ -85,7 +85,7 @@ def run_spark_job(num_partitions, unique_run_id):
         start_time_str = history['stateStartTime']
         break
 
-    # Note: .replace('Z', '+00:00') ensures compatibility with Python's fromisoformat
+    # .replace('Z', '+00:00') ensures compatibility with Python's fromisoformat
     start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
     end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
 
@@ -98,7 +98,7 @@ def run_spark_job(num_partitions, unique_run_id):
 
     # save the run
     local_output_dir = f"local_results/{unique_run_id}"
-    print(f"Downloading results to {local_output_dir}...")
+    print(f"[INFO] Downloading results to {local_output_dir}...")
     subprocess.call(f"mkdir -p {local_output_dir}", shell=True)
     download_cmd = f"gsutil cp -r {BASE_OUTPUT_PATH}/{unique_run_id}/* {local_output_dir}"
     run_command(download_cmd)
@@ -107,7 +107,7 @@ def run_spark_job(num_partitions, unique_run_id):
 
 
 if __name__ == "__main__":
-  print("--- Preparing Environment ---")
+  print("[INFO] Preparing Environment")
   run_command("sbt package")
   run_command(f"gsutil cp {LOCAL_JAR_PATH} {REMOTE_JAR_PATH}")
   
@@ -120,20 +120,20 @@ if __name__ == "__main__":
       create_cluster(workers)
 
       for partitions in PARTITION_CONFIGS:
-        print(f"\n>>> TESTING: Workers={workers}, Partitions={partitions} <<<")
+        print(f"[INFO] Testing: Workers={workers}, Partitions={partitions} <<<")
         
         run_id = f"w{workers}_p{partitions}_{int(time.time())}"
         
         try:
           duration = run_spark_job(partitions, run_id)
-          print(f">>> SUCCESS: Duration = {duration:.2f} seconds")
+          print(f"[INFO] Success: Duration = {duration:.2f} seconds")
           
           with open(RESULTS_FILE, 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow([workers, partitions, f"{duration:.2f}", datetime.now(), "Success"])
                 
         except Exception as e:
-          print(f">>> FAILED: Workers={workers}, Partitions={partitions}")
+          print(f"[ERROR] Failed: Workers={workers}, Partitions={partitions}")
           print(e)
 
           with open(RESULTS_FILE, 'a', newline='') as csvfile:
@@ -141,10 +141,10 @@ if __name__ == "__main__":
             writer.writerow([workers, partitions, "0", datetime.now(), "Failed"])
 
     except Exception as e:
-      print(f"[CRITICAL] Failed to create cluster with {workers} workers. Moving to next config.")
+      print(f"[ERROR] Failed to create cluster with {workers} workers. Moving to next config.")
       print(e)
     
     finally:
       delete_cluster()
 
-  print(f"\n--- Benchmarking Complete. Results saved to {RESULTS_FILE} ---")
+  print(f"[INFO] Benchmarking Complete. Results saved to {RESULTS_FILE}")
